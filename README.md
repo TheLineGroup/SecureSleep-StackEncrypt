@@ -1,12 +1,16 @@
 Secure Sleep Function README
+
 Overview
+
 This repository contains the implementation of a custom secure sleep function for Windows, designed to enhance security by encrypting stack data during the sleep duration. Utilizing advanced techniques in thread synchronization, encryption algorithms, and low-level programming, this function aims to protect sensitive data in memory from unauthorized access or modification.
 
 Features
+
 Custom Sleep Mechanism: Implements a sleep function that encrypts sensitive data before sleeping and decrypts it afterward, ensuring data remains secure during the sleep interval.
 Advanced Encryption: Utilizes AES-128 encryption in CBC mode with PKCS7 padding to secure the data, providing a high level of security.
 Low-Level System Interaction: Directly interacts with the Windows API for process and memory management, demonstrating deep system-level programming.
 Thread Synchronization: Employs standard threading and timing mechanisms to manage sleep duration and ensure safe encryption/decryption operations.
+
 Prerequisites
 To compile and run this code, ensure you have the following installed:
 
