@@ -1,49 +1,78 @@
 use std::ptr::null_mut;
-use std::ffi::OsString;
 use winapi::um::processthreadsapi::{GetCurrentProcessId, OpenProcess};
-use winapi::um::memoryapi::{VirtualAllocEx, VirtualFreeEx};
-use winapi::um::winnt::{MEM_COMMIT, MEM_RELEASE, MEM_RESERVE, PAGE_READWRITE, HANDLE};
+use winapi::um::memoryapi::{VirtualAlloc, VirtualFree, ReadProcessMemory, WriteProcessMemory};
+use winapi::um::winnt::{MEM_COMMIT, MEM_RELEASE, MEM_RESERVE, PAGE_READWRITE, PROCESS_QUERY_INFORMATION, PROCESS_VM_OPERATION, PROCESS_VM_WRITE};
+use std::ffi::OsString;
+use std::os::windows::ffi::OsStringExt;
+use rand::{Rng, rngs::ThreadRng};
+use aes::Aes128;
+use aes::cipher::{NewCipher, BlockEncrypt, BlockDecrypt, KeyInit};
+use block_modes::{BlockMode, Cbc};
+use block_modes::block_padding::Pkcs7;
+use aes::cipher::generic_array::GenericArray;
+use std::thread;
+use std::time::Duration;
 
-#[repr(C)]
-struct UNICODE_STRING {
-    Length: u16,
-    MaximumLength: u16,
-    Buffer: *mut u16,
-}
-
-extern "system" {
-    fn GetModuleHandleExW(dwFlags: u32, lpModuleName: *const u16, phModule: *mut HANDLE) -> i32;
-}
-
-fn get_module_handle_ex(lp_module_name: *const u16) -> Result<HANDLE, String> {
-    if lp_module_name.is_null() {
-        return Err("Invalid module name.".to_string());
-    }
-
-    unsafe {
-        let mut h_module = null_mut();
-        let result = GetModuleHandleExW(0, lp_module_name, &mut h_module as *mut HANDLE);
-        if result != 0 {
-            Ok(h_module)
-        } else {
-            Err(format!("Failed to get module handle. Error code: {}", result))
-        }
-    }
-}
+type Aes128Cbc = Cbc<Aes128, Pkcs7>;
 
 fn main() {
-    let lp_module_name = OsString::from("kernel32.dll").encode_wide().collect::<Vec<u16>>();
-    match get_module_handle_ex(lp_module_name.as_ptr()) {
-        Ok(h_module) => {
-            println!("Module handle: {:?}", h_module);
-            // Free the module handle when it's no longer needed
-            let result = unsafe { VirtualFreeEx(h_module, null_mut(), 0, MEM_RELEASE) };
-            if result == 0 {
-                eprintln!("Failed to free module handle.");
-            }
-        }
-        Err(err) => {
-            eprintln!("{}", err);
-        }
+    custom_sleep(Duration::from_secs(5)); // Custom sleep for 5 seconds
+}
+
+fn custom_sleep(duration: Duration) {
+    let process_id = unsafe { GetCurrentProcessId() };
+    let process_handle = unsafe { 
+        OpenProcess(PROCESS_QUERY_INFORMATION | PROCESS_VM_OPERATION | PROCESS_VM_WRITE, 0, process_id) 
+    };
+
+    if process_handle.is_null() {
+        eprintln!("Failed to open process.");
+        return;
+    }
+
+    // Allocate memory in the current process - demonstration purposes
+    let base_address = unsafe {
+        VirtualAlloc(null_mut(), 4096, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE)
+    };
+
+    if base_address.is_null() {
+        eprintln!("Failed to allocate memory.");
+        unsafe { CloseHandle(process_handle); }
+        return;
+    }
+
+    // Encrypt stack data
+    let key = GenericArray::from_slice(b"an example very very secret key.");
+    let iv = GenericArray::from_slice(b"unique initialization vector");
+    let cipher = Aes128Cbc::new(key, iv);
+
+    let mut stack_data: Vec<u8> = vec![0; 4096];
+    let mut rng = rand::thread_rng();
+    rng.fill_bytes(&mut stack_data);
+    let ciphertext = cipher.encrypt_vec(&stack_data);
+
+    // Write encrypted stack data to memory
+    let mut bytes_written: usize = 0;
+    unsafe {
+        WriteProcessMemory(process_handle, base_address, ciphertext.as_ptr() as _, 4096, &mut bytes_written);
+    }
+
+    // Sleep for the specified duration
+    thread::sleep(duration);
+
+    // Read encrypted stack data
+    let mut encrypted_stack_data: Vec<u8> = vec![0; 4096];
+    let mut bytes_read: usize = 0;
+    unsafe {
+        ReadProcessMemory(process_handle, base_address, encrypted_stack_data.as_mut_ptr() as _, 4096, &mut bytes_read);
+    }
+
+    // Decrypt stack data after sleep
+    let decrypted_stack_data = cipher.decrypt_vec(&encrypted_stack_data).expect("Decryption error");
+
+    // Cleanup
+    unsafe {
+        VirtualFree(base_address, 0, MEM_RELEASE);
+        CloseHandle(process_handle);
     }
 }
